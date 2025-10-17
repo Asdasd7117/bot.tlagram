@@ -8,9 +8,10 @@ from PIL import Image, ImageDraw
 from web3 import Web3
 import requests
 from dotenv import load_dotenv
+import asyncio
 
 # ---- تحميل متغيرات البيئة ----
-load_dotenv()  # هذا يقرأ .env إذا موجود
+load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN غير موجود. تأكد من Environment أو ملف .env")
@@ -25,7 +26,7 @@ NFT_CONTRACT_ADDRESS = os.getenv("NFT_CONTRACT_ADDRESS")
 
 # ---- إعداد البوت ----
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher()  # ✅ لا تمرر bot في الإصدار 3.x
 DB_PATH = "nft_bot.db"
 
 # ---- معرف الأدمن ----
@@ -74,7 +75,7 @@ async def init_db():
         await db.commit()
 
 # ---- /start ----
-@dp.message_handler(commands=["start"])
+@dp.message(commands=["start"])
 async def start(message: types.Message):
     tg_id = message.from_user.id
     username = message.from_user.username
@@ -87,19 +88,19 @@ async def start(message: types.Message):
                 (tg_id, username, datetime.utcnow())
             )
             await db.commit()
-            await message.reply(f"مرحبا {username} ✅ تم تسجيلك بنجاح!")
+            await message.answer(f"مرحبا {username} ✅ تم تسجيلك بنجاح!")
         else:
-            await message.reply(f"مرحبا {username} 👋 أنت مسجل بالفعل.")
+            await message.answer(f"مرحبا {username} 👋 أنت مسجل بالفعل.")
 
 # ---- /mint ----
-@dp.message_handler(commands=["mint"])
+@dp.message(commands=["mint"])
 async def mint(message: types.Message):
     tg_id = message.from_user.id
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("SELECT id FROM users WHERE tg_id=?", (tg_id,))
         user = await cursor.fetchone()
         if not user:
-            await message.reply("أنت غير مسجل، استخدم /start")
+            await message.answer("أنت غير مسجل، استخدم /start")
             return
         user_id = user[0]
 
@@ -134,11 +135,12 @@ async def mint(message: types.Message):
         """, (user_id, f"NFT-{token_id}", '{}', ipfs_url, str(token_id), 0.0, datetime.utcnow()))
         await db.commit()
 
-        await message.reply_photo(photo=file_path, caption=f"تم إنشاء NFT!\nToken ID: {token_id}\nIPFS: {ipfs_url}")
+        await message.answer_photo(photo=file_path, caption=f"تم إنشاء NFT!\nToken ID: {token_id}\nIPFS: {ipfs_url}")
 
 # ---- تشغيل البوت ----
+async def main():
+    await init_db()
+    await dp.start_polling(bot)
+
 if __name__ == "__main__":
-    import asyncio
-    from aiogram import executor
-    asyncio.run(init_db())
-    executor.start_polling(dp, skip_updates=True)
+    asyncio.run(main())
