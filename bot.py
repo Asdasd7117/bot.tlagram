@@ -1,15 +1,29 @@
-import os, json, aiosqlite
+import os
+import json
+import aiosqlite
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from PIL import Image, ImageDraw
 from web3 import Web3
 import requests
+from dotenv import load_dotenv
 
-# ---- إعدادات البيئة ----
+# ---- تحميل متغيرات البيئة ----
+load_dotenv()  # هذا يقرأ .env إذا موجود
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN غير موجود. تأكد من Environment أو ملف .env")
+
 INFURA_PROJECT_ID = os.getenv("INFURA_PROJECT_ID")
 INFURA_PROJECT_SECRET = os.getenv("INFURA_PROJECT_SECRET")
+
+RPC_URL = os.getenv("RPC_URL")
+PRIVATE_KEY = os.getenv("PRIVATE_KEY")
+CHAIN_ID = int(os.getenv("CHAIN_ID", "11155111"))
+NFT_CONTRACT_ADDRESS = os.getenv("NFT_CONTRACT_ADDRESS")
+
+# ---- إعداد البوت ----
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 DB_PATH = "nft_bot.db"
@@ -18,12 +32,11 @@ DB_PATH = "nft_bot.db"
 ADMIN_IDS = [123456789]  # ضع هنا Telegram ID الخاص بالأدمن
 
 # ---- Web3 ----
-w3 = Web3(Web3.HTTPProvider(os.getenv("RPC_URL")))
-account = w3.eth.account.from_key(os.getenv("PRIVATE_KEY"))
-nft_contract_address = os.getenv("NFT_CONTRACT_ADDRESS")
+w3 = Web3(Web3.HTTPProvider(RPC_URL))
+account = w3.eth.account.from_key(PRIVATE_KEY)
 with open("nft_contract/abi.json") as f:
     nft_abi = json.load(f)
-contract = w3.eth.contract(address=nft_contract_address, abi=nft_abi)
+contract = w3.eth.contract(address=NFT_CONTRACT_ADDRESS, abi=nft_abi)
 
 # ---- رفع الملفات على IPFS عبر Infura ----
 def upload_to_ipfs(file_path):
@@ -34,7 +47,7 @@ def upload_to_ipfs(file_path):
     hash = res.json()["Hash"]
     return f"https://ipfs.io/ipfs/{hash}"
 
-# ---- إنشاء قاعدة البيانات تلقائيًا ----
+# ---- إنشاء قاعدة البيانات ----
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
@@ -90,6 +103,7 @@ async def mint(message: types.Message):
             return
         user_id = user[0]
 
+        # ---- توليد صورة NFT ----
         os.makedirs("nft_images", exist_ok=True)
         img = Image.new('RGB', (200,200), color=(255,0,0))
         draw = ImageDraw.Draw(img)
@@ -97,10 +111,10 @@ async def mint(message: types.Message):
         file_path = f"nft_images/nft_{tg_id}_{int(datetime.utcnow().timestamp())}.png"
         img.save(file_path)
 
-        # رفع الصورة على IPFS عبر Infura
+        # ---- رفع الصورة على IPFS ----
         ipfs_url = upload_to_ipfs(file_path)
 
-        # Mint على ERC1155
+        # ---- Mint على ERC1155 ----
         nonce = w3.eth.get_transaction_count(account.address)
         tx = contract.functions.mint(account.address, 1, ipfs_url).build_transaction({
             'from': account.address,
@@ -113,7 +127,7 @@ async def mint(message: types.Message):
         w3.eth.wait_for_transaction_receipt(tx_hash)
         token_id = contract.functions.currentTokenID().call()
 
-        # حفظ البيانات
+        # ---- حفظ البيانات ----
         await db.execute("""
             INSERT INTO assets (owner_user_id, name, data_json, image_url, onchain_token_id, listed_price, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -121,10 +135,6 @@ async def mint(message: types.Message):
         await db.commit()
 
         await message.reply_photo(photo=file_path, caption=f"تم إنشاء NFT!\nToken ID: {token_id}\nIPFS: {ipfs_url}")
-
-# ---- باقي الأوامر مثل /list, /market, /buy, /admin ----
-# يمكن أن تتركها كما في النسخة السابقة، فقط استبدل أي استخدام ipfshttpclient بـ upload_to_ipfs()
-# مثال: ipfs_url = upload_to_ipfs(file_path)
 
 # ---- تشغيل البوت ----
 if __name__ == "__main__":
