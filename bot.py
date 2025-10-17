@@ -4,6 +4,7 @@ import aiosqlite
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import Command
 from PIL import Image, ImageDraw
 import requests
 from dotenv import load_dotenv
@@ -28,7 +29,7 @@ ADMIN_IDS = [123456789]  # ضع هنا Telegram ID الخاص بالأدمن
 # ---- رفع الملفات على IPFS عبر Infura (اختياري) ----
 def upload_to_ipfs(file_path):
     if not INFURA_PROJECT_ID or not INFURA_PROJECT_SECRET:
-        # لو مفتاح Infura غير موجود، مجرد محاكاة
+        # مجرد محاكاة
         return f"file://{file_path}"
     url = "https://ipfs.infura.io:5001/api/v0/add"
     with open(file_path, "rb") as f:
@@ -64,7 +65,7 @@ async def init_db():
         await db.commit()
 
 # ---- /start ----
-@dp.message(commands=["start"])
+@dp.message(Command("start"))
 async def start(message: types.Message):
     tg_id = message.from_user.id
     username = message.from_user.username
@@ -82,7 +83,7 @@ async def start(message: types.Message):
             await message.answer(f"مرحبا {username} 👋 أنت مسجل بالفعل (تجريبي).")
 
 # ---- /mint تجريبي ----
-@dp.message(commands=["mint"])
+@dp.message(Command("mint"))
 async def mint(message: types.Message):
     tg_id = message.from_user.id
     async with aiosqlite.connect(DB_PATH) as db:
@@ -117,7 +118,7 @@ async def mint(message: types.Message):
         await message.answer_photo(photo=file_path, caption=f"تم إنشاء NFT تجريبي!\nToken ID: {token_id}\nURL: {ipfs_url}")
 
 # ---- /admin لوحة تحكم بسيطة ----
-@dp.message(commands=["admin"])
+@dp.message(Command("admin"))
 async def admin_panel(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ لا تملك صلاحيات الأدمن")
