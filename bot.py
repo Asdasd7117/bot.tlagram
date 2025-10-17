@@ -5,7 +5,6 @@ from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from PIL import Image, ImageDraw
-from web3 import Web3
 import requests
 from dotenv import load_dotenv
 import asyncio
@@ -16,31 +15,21 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN غير موجود. تأكد من Environment أو ملف .env")
 
-INFURA_PROJECT_ID = os.getenv("INFURA_PROJECT_ID")
-INFURA_PROJECT_SECRET = os.getenv("INFURA_PROJECT_SECRET")
+INFURA_PROJECT_ID = os.getenv("INFURA_PROJECT_ID", "")
+INFURA_PROJECT_SECRET = os.getenv("INFURA_PROJECT_SECRET", "")
 
-RPC_URL = os.getenv("RPC_URL")
-PRIVATE_KEY = os.getenv("PRIVATE_KEY")
-CHAIN_ID = int(os.getenv("CHAIN_ID", "11155111"))
-NFT_CONTRACT_ADDRESS = os.getenv("NFT_CONTRACT_ADDRESS")
-
-# ---- إعداد البوت ----
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()  # ✅ لا تمرر bot في الإصدار 3.x
-DB_PATH = "nft_bot.db"
+dp = Dispatcher()  # لا تمرر bot
+DB_PATH = "nft_bot_test.db"
 
 # ---- معرف الأدمن ----
 ADMIN_IDS = [123456789]  # ضع هنا Telegram ID الخاص بالأدمن
 
-# ---- Web3 ----
-w3 = Web3(Web3.HTTPProvider(RPC_URL))
-account = w3.eth.account.from_key(PRIVATE_KEY)
-with open("nft_contract/abi.json") as f:
-    nft_abi = json.load(f)
-contract = w3.eth.contract(address=NFT_CONTRACT_ADDRESS, abi=nft_abi)
-
-# ---- رفع الملفات على IPFS عبر Infura ----
+# ---- رفع الملفات على IPFS عبر Infura (اختياري) ----
 def upload_to_ipfs(file_path):
+    if not INFURA_PROJECT_ID or not INFURA_PROJECT_SECRET:
+        # لو مفتاح Infura غير موجود، مجرد محاكاة
+        return f"file://{file_path}"
     url = "https://ipfs.infura.io:5001/api/v0/add"
     with open(file_path, "rb") as f:
         files = {"file": f}
@@ -88,11 +77,11 @@ async def start(message: types.Message):
                 (tg_id, username, datetime.utcnow())
             )
             await db.commit()
-            await message.answer(f"مرحبا {username} ✅ تم تسجيلك بنجاح!")
+            await message.answer(f"مرحبا {username} ✅ تم تسجيلك بنجاح (تجريبي)!")
         else:
-            await message.answer(f"مرحبا {username} 👋 أنت مسجل بالفعل.")
+            await message.answer(f"مرحبا {username} 👋 أنت مسجل بالفعل (تجريبي).")
 
-# ---- /mint ----
+# ---- /mint تجريبي ----
 @dp.message(commands=["mint"])
 async def mint(message: types.Message):
     tg_id = message.from_user.id
@@ -104,7 +93,7 @@ async def mint(message: types.Message):
             return
         user_id = user[0]
 
-        # ---- توليد صورة NFT ----
+        # ---- توليد صورة NFT تجريبية ----
         os.makedirs("nft_images", exist_ok=True)
         img = Image.new('RGB', (200,200), color=(255,0,0))
         draw = ImageDraw.Draw(img)
@@ -112,21 +101,11 @@ async def mint(message: types.Message):
         file_path = f"nft_images/nft_{tg_id}_{int(datetime.utcnow().timestamp())}.png"
         img.save(file_path)
 
-        # ---- رفع الصورة على IPFS ----
+        # ---- رفع الصورة (محلي أو IPFS) ----
         ipfs_url = upload_to_ipfs(file_path)
 
-        # ---- Mint على ERC1155 ----
-        nonce = w3.eth.get_transaction_count(account.address)
-        tx = contract.functions.mint(account.address, 1, ipfs_url).build_transaction({
-            'from': account.address,
-            'nonce': nonce,
-            'gas': 500000,
-            'gasPrice': w3.to_wei('5', 'gwei')
-        })
-        signed_tx = account.sign_transaction(tx)
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-        w3.eth.wait_for_transaction_receipt(tx_hash)
-        token_id = contract.functions.currentTokenID().call()
+        # ---- Mint تجريبي بدون شبكة ----
+        token_id = int(datetime.utcnow().timestamp())  # رقم Token وهمي
 
         # ---- حفظ البيانات ----
         await db.execute("""
@@ -135,7 +114,28 @@ async def mint(message: types.Message):
         """, (user_id, f"NFT-{token_id}", '{}', ipfs_url, str(token_id), 0.0, datetime.utcnow()))
         await db.commit()
 
-        await message.answer_photo(photo=file_path, caption=f"تم إنشاء NFT!\nToken ID: {token_id}\nIPFS: {ipfs_url}")
+        await message.answer_photo(photo=file_path, caption=f"تم إنشاء NFT تجريبي!\nToken ID: {token_id}\nURL: {ipfs_url}")
+
+# ---- /admin لوحة تحكم بسيطة ----
+@dp.message(commands=["admin"])
+async def admin_panel(message: types.Message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ لا تملك صلاحيات الأدمن")
+        return
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        users = await db.execute_fetchall("SELECT tg_id, username FROM users")
+        assets = await db.execute_fetchall("SELECT id, name, owner_user_id, image_url, listed_price FROM assets")
+
+    text = "📋 لوحة التحكم:\n\nUsers:\n"
+    for u in users:
+        text += f"- {u[1]} ({u[0]})\n"
+    text += "\nAssets:\n"
+    for a in assets:
+        text += f"- ID {a[0]} | {a[1]} | Owner ID: {a[2]} | Price: {a[4]}\n"
+        text += f"  URL: {a[3]}\n"
+
+    await message.answer(text)
 
 # ---- تشغيل البوت ----
 async def main():
