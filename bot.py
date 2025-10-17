@@ -12,6 +12,9 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 DB_PATH = "nft_bot.db"
 
+# ---- معرف الأدمن ----
+ADMIN_IDS = [123456789]  # ضع هنا Telegram ID الخاص بالأدمن
+
 # ---- Web3 ----
 w3 = Web3(Web3.HTTPProvider(os.getenv("RPC_URL")))
 account = w3.eth.account.from_key(os.getenv("PRIVATE_KEY"))
@@ -79,7 +82,6 @@ async def mint(message: types.Message):
             return
         user_id = user[0]
 
-        # توليد صورة NFT بسيطة
         os.makedirs("nft_images", exist_ok=True)
         img = Image.new('RGB', (200,200), color=(255,0,0))
         draw = ImageDraw.Draw(img)
@@ -104,7 +106,7 @@ async def mint(message: types.Message):
         w3.eth.wait_for_transaction_receipt(tx_hash)
         token_id = contract.functions.currentTokenID().call()
 
-        # حفظ البيانات في SQLite
+        # حفظ البيانات
         await db.execute("""
             INSERT INTO assets (owner_user_id, name, data_json, image_url, onchain_token_id, listed_price, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -173,7 +175,6 @@ async def buy_callback(callback_query: types.CallbackQuery):
             return
         owner_id, token_id, price = asset
 
-        # نقل الملكية على العقد ERC1155
         nonce = w3.eth.get_transaction_count(account.address)
         tx = contract.functions.safeTransferFrom(account.address, account.address, int(token_id), 1, b'').build_transaction({
             'from': account.address,
@@ -190,6 +191,51 @@ async def buy_callback(callback_query: types.CallbackQuery):
 
         await callback_query.answer("تم الشراء بنجاح ✅")
         await bot.send_message(tg_id, f"لقد اشتريت الأصل بنجاح! Asset ID: {asset_id}\nPrice: {price} ETH")
+
+# ---- /admin ----
+@dp.message_handler(commands=["admin"])
+async def admin_panel(message: types.Message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.reply("❌ ليس لديك صلاحية للوصول للأدمن.")
+        return
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton("عرض كل الأصول", callback_data="admin_view"),
+        InlineKeyboardButton("إرسال رسالة جماعية", callback_data="admin_broadcast")
+    )
+    await message.reply("مرحبا بالأدمن 👑 اختر العملية:", reply_markup=kb)
+
+# ---- أزرار الأدمن ----
+@dp.callback_query_handler(lambda c: c.data.startswith("admin_"))
+async def admin_actions(callback_query: types.CallbackQuery):
+    if callback_query.from_user.id not in ADMIN_IDS:
+        await callback_query.answer("❌ ليس لديك صلاحية.")
+        return
+    action = callback_query.data.split("_")[1]
+
+    if action == "view":
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute("SELECT id, name, owner_user_id, listed_price FROM assets")
+            assets = await cursor.fetchall()
+            text = "\n".join([f"ID:{a[0]} | {a[1]} | Owner:{a[2]} | Price:{a[3]}" for a in assets]) or "لا يوجد أصول."
+            await callback_query.message.reply(text)
+
+    elif action == "broadcast":
+        await callback_query.message.reply("أرسل لي الرسالة التي تريد إرسالها لكل المستخدمين:")
+
+        @dp.message_handler()
+        async def send_broadcast(msg: types.Message):
+            text = msg.text
+            async with aiosqlite.connect(DB_PATH) as db:
+                cursor = await db.execute("SELECT tg_id FROM users")
+                users = await cursor.fetchall()
+                for u in users:
+                    try:
+                        await bot.send_message(u[0], f"📢 رسالة من الأدمن:\n{text}")
+                    except:
+                        pass
+            await msg.reply("تم الإرسال لكل المستخدمين ✅")
+            dp.message_handlers.unregister(send_broadcast)
 
 # ---- تشغيل البوت ----
 if __name__ == "__main__":
