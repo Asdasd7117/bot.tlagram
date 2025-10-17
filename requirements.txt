@@ -3,3 +3,4 @@ web3
 pillow
 aiosqlite
 python-dotenv
+ipfshttpclient==0.9.0a2
